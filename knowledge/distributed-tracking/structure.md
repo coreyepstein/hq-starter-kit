@@ -9,7 +9,8 @@ The `.hq/` directory enables distributed teams to share PRD and task status via 
 ├── .hq/
 │   ├── prd.json        # Project requirements and task status
 │   ├── claims.json     # Active task claims
-│   └── sync-log.json   # Sync history
+│   ├── sync-log.json   # Sync history
+│   └── prompt.md       # Pure Ralph prompt (copied from HQ, can evolve with project)
 ├── src/
 └── ...
 ```
@@ -225,6 +226,35 @@ Audit trail of all sync operations for debugging and history.
   }
 }
 ```
+
+### prompt.md
+
+The Pure Ralph prompt file, copied from HQ and customizable per project.
+
+```markdown
+# Pure Ralph Prompt
+
+You are executing the Pure Ralph Loop...
+
+**PRD Path:** .hq/prd.json
+**Target Repo:** {{TARGET_REPO}}
+
+---
+
+[Full prompt content - see prompts/pure-ralph-base.md]
+```
+
+**Key Characteristics:**
+- **Initial source:** Copied from `HQ/prompts/pure-ralph-base.md` on first run
+- **References PRD locally:** Uses `.hq/prd.json` (not an HQ path)
+- **Project-specific evolution:** Can be edited to add project-specific patterns
+- **Version controlled:** Part of the repo, evolves with the project
+
+**Why prompt.md lives in .hq/:**
+1. **Portability:** Project can run Ralph loop without HQ access
+2. **Customization:** Project teams can tune the prompt for their needs
+3. **Version tracking:** Prompt changes are committed with the project
+4. **Self-contained:** Everything needed for distributed work is in one directory
 
 ## .gitignore Recommendations
 

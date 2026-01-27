@@ -109,11 +109,15 @@ fi
 # Configuration
 # ============================================================================
 
-BASE_PROMPT_PATH="$HQ_PATH/prompts/pure-ralph-base.md"
+HQ_BASE_PROMPT_PATH="$HQ_PATH/prompts/pure-ralph-base.md"
 PROJECT_NAME=$(basename "$(dirname "$PRD_PATH")")
 LOG_DIR="$HQ_PATH/workspace/orchestrator/$PROJECT_NAME"
 LOG_FILE="$LOG_DIR/pure-ralph.log"
-LOCK_FILE="$TARGET_REPO/.pure-ralph.lock"
+
+# .hq/ directory paths in target repo
+HQ_DIR="$TARGET_REPO/.hq"
+REPO_PROMPT_PATH="$HQ_DIR/prompt.md"
+REPO_PRD_PATH="$HQ_DIR/prd.json"
 
 # ============================================================================
 # Color Output
@@ -125,6 +129,53 @@ GREEN='\033[0;32m'
 CYAN='\033[0;36m'
 GRAY='\033[0;90m'
 NC='\033[0m' # No Color
+
+# ============================================================================
+# HQ Directory Initialization
+# ============================================================================
+
+initialize_hq_directory() {
+    # Create .hq directory if missing
+    if [[ ! -d "$HQ_DIR" ]]; then
+        write_log "Creating .hq directory in target repo"
+        mkdir -p "$HQ_DIR"
+    fi
+
+    # Copy prompt.md if missing
+    if [[ ! -f "$REPO_PROMPT_PATH" ]]; then
+        write_log "Copying prompt template to $REPO_PROMPT_PATH"
+        if [[ -f "$HQ_BASE_PROMPT_PATH" ]]; then
+            # Read the base prompt and substitute TARGET_REPO
+            sed "s|{{TARGET_REPO}}|$TARGET_REPO|g" "$HQ_BASE_PROMPT_PATH" > "$REPO_PROMPT_PATH"
+            write_log "Prompt template created at $REPO_PROMPT_PATH" "SUCCESS"
+        else
+            write_log "Base prompt not found at $HQ_BASE_PROMPT_PATH" "ERROR"
+            exit 1
+        fi
+    else
+        write_log "Using existing prompt at $REPO_PROMPT_PATH"
+    fi
+
+    # Copy prd.json if missing
+    if [[ ! -f "$REPO_PRD_PATH" ]]; then
+        write_log "Copying PRD to $REPO_PRD_PATH"
+        if [[ -f "$PRD_PATH" ]]; then
+            # Read the HQ PRD and add sync_metadata using jq
+            local timestamp
+            timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+            jq --arg synced_at "$timestamp" \
+               --arg synced_from "$PRD_PATH" \
+               '. + {sync_metadata: {synced_at: $synced_at, synced_from: $synced_from, synced_by: "pure-ralph-init"}}' \
+               "$PRD_PATH" > "$REPO_PRD_PATH"
+            write_log "PRD copied to $REPO_PRD_PATH" "SUCCESS"
+        else
+            write_log "HQ PRD not found at $PRD_PATH" "ERROR"
+            exit 1
+        fi
+    else
+        write_log "Using existing PRD at $REPO_PRD_PATH"
+    fi
+}
 
 # ============================================================================
 # Logging Functions
@@ -146,108 +197,6 @@ initialize_logging() {
         echo ""
     } >> "$LOG_FILE"
 }
-
-# ============================================================================
-# Lock File Functions
-# ============================================================================
-
-create_lock_file() {
-    local timestamp
-    timestamp=$(date -Iseconds)
-    cat > "$LOCK_FILE" <<EOF
-{
-  "project": "$PROJECT_NAME",
-  "pid": $$,
-  "started_at": "$timestamp"
-}
-EOF
-    write_log "Lock file created: $LOCK_FILE"
-}
-
-remove_lock_file() {
-    if [[ -f "$LOCK_FILE" ]]; then
-        rm -f "$LOCK_FILE"
-        write_log "Lock file removed: $LOCK_FILE"
-    fi
-}
-
-check_existing_lock() {
-    if [[ -f "$LOCK_FILE" ]]; then
-        # Read lock file contents
-        local lock_project
-        local lock_pid
-        local lock_started
-        lock_project=$(jq -r '.project' "$LOCK_FILE" 2>/dev/null || echo "unknown")
-        lock_pid=$(jq -r '.pid' "$LOCK_FILE" 2>/dev/null || echo "unknown")
-        lock_started=$(jq -r '.started_at' "$LOCK_FILE" 2>/dev/null || echo "unknown")
-
-        # Calculate duration if we can parse the timestamp
-        local duration_str="unknown"
-        if [[ "$lock_started" != "unknown" ]]; then
-            local start_epoch
-            local now_epoch
-            local diff_seconds
-            # Try to parse ISO timestamp
-            if command -v gdate &> /dev/null; then
-                start_epoch=$(gdate -d "$lock_started" +%s 2>/dev/null || echo "0")
-            else
-                start_epoch=$(date -d "$lock_started" +%s 2>/dev/null || echo "0")
-            fi
-            now_epoch=$(date +%s)
-            if [[ "$start_epoch" != "0" ]]; then
-                diff_seconds=$((now_epoch - start_epoch))
-                local hours=$((diff_seconds / 3600))
-                local minutes=$(((diff_seconds % 3600) / 60))
-                local seconds=$((diff_seconds % 60))
-                duration_str=$(printf "%02d:%02d:%02d" $hours $minutes $seconds)
-            fi
-        fi
-
-        echo ""
-        echo -e "${YELLOW}=== WARNING: Lock File Detected ===${NC}"
-        echo -e "${YELLOW}Another pure-ralph loop may be running on this repo.${NC}"
-        echo ""
-        echo -e "${GRAY}  Project: $lock_project${NC}"
-        echo -e "${GRAY}  PID: $lock_pid${NC}"
-        echo -e "${GRAY}  Started: $lock_started${NC}"
-        echo -e "${GRAY}  Duration: $duration_str${NC}"
-        echo ""
-
-        # Check if process is still running
-        local process_running=false
-        if [[ "$lock_pid" != "unknown" ]] && kill -0 "$lock_pid" 2>/dev/null; then
-            process_running=true
-            echo -e "  Process Status: ${RED}RUNNING${NC}"
-        else
-            echo -e "  Process Status: ${YELLOW}NOT RUNNING (stale lock)${NC}"
-        fi
-        echo ""
-
-        write_log "Existing lock file found for project '$lock_project' (PID: $lock_pid, Duration: $duration_str)" "WARN"
-
-        # Prompt user
-        read -r -p "Another pure-ralph is running. Continue anyway? (y/N) " response
-        case "$response" in
-            [Yy])
-                write_log "User chose to continue despite existing lock" "WARN"
-                echo -e "${YELLOW}Continuing... (existing lock will be overwritten)${NC}"
-                return 0
-                ;;
-            *)
-                write_log "User chose to abort due to existing lock" "INFO"
-                echo -e "${RED}Aborting.${NC}"
-                return 1
-                ;;
-        esac
-    fi
-    return 0
-}
-
-# Trap to ensure lock file is removed on exit (success or failure)
-cleanup_on_exit() {
-    remove_lock_file
-}
-trap cleanup_on_exit EXIT
 
 write_log() {
     local message="$1"
@@ -291,11 +240,12 @@ check_jq() {
 }
 
 get_prd() {
-    if [[ ! -f "$PRD_PATH" ]]; then
-        write_log "PRD not found: $PRD_PATH" "ERROR"
+    # Read from repo's .hq/prd.json
+    if [[ ! -f "$REPO_PRD_PATH" ]]; then
+        write_log "PRD not found: $REPO_PRD_PATH" "ERROR"
         exit 1
     fi
-    cat "$PRD_PATH"
+    cat "$REPO_PRD_PATH"
 }
 
 get_task_count() {
@@ -343,14 +293,15 @@ build_task_prompt() {
     local task="$1"
     local prd="$2"
 
-    # Read base prompt
-    if [[ ! -f "$BASE_PROMPT_PATH" ]]; then
-        write_log "Base prompt not found: $BASE_PROMPT_PATH" "ERROR"
+    # Read prompt from repo's .hq/prompt.md (already has TARGET_REPO substituted)
+    # No PRD_PATH substitution needed - prompt references .hq/prd.json directly
+    if [[ ! -f "$REPO_PROMPT_PATH" ]]; then
+        write_log "Prompt not found: $REPO_PROMPT_PATH" "ERROR"
         exit 1
     fi
 
     local base_prompt
-    base_prompt=$(cat "$BASE_PROMPT_PATH")
+    base_prompt=$(cat "$REPO_PROMPT_PATH")
 
     # Extract task details
     local task_id
@@ -358,10 +309,8 @@ build_task_prompt() {
     task_id=$(echo "$task" | jq -r '.id')
     task_title=$(echo "$task" | jq -r '.title')
 
-    # Replace placeholders
+    # Only substitute task-specific placeholders (TARGET_REPO already done during init)
     local prompt="$base_prompt"
-    prompt="${prompt//\{\{TARGET_REPO\}\}/$TARGET_REPO}"
-    prompt="${prompt//\{\{PRD_PATH\}\}/$PRD_PATH}"
     prompt="${prompt//\{\{TASK_ID\}\}/$task_id}"
     prompt="${prompt//\{\{TASK_TITLE\}\}/$task_title}"
 
@@ -373,7 +322,7 @@ build_task_prompt() {
     cat <<EOF
 $prompt
 
-Execute task $task_id from $PRD_PATH.
+Execute task $task_id from .hq/prd.json.
 
 Context from prior tasks:
 $prior_context
@@ -487,7 +436,7 @@ EOF
                     sleep 5
                     # Check if PRD was updated for this task
                     local task_passes
-                    task_passes=$(cat "$PRD_PATH" | jq -r ".features[] | select(.id == \"$task_id\") | .passes")
+                    task_passes=$(cat "$REPO_PRD_PATH" | jq -r ".features[] | select(.id == \"$task_id\") | .passes")
                     if [[ "$task_passes" == "true" ]]; then
                         break
                     fi
@@ -506,7 +455,7 @@ EOF
                 while true; do
                     sleep 5
                     local task_passes
-                    task_passes=$(cat "$PRD_PATH" | jq -r ".features[] | select(.id == \"$task_id\") | .passes")
+                    task_passes=$(cat "$REPO_PRD_PATH" | jq -r ".features[] | select(.id == \"$task_id\") | .passes")
                     if [[ "$task_passes" == "true" ]]; then
                         break
                     fi
@@ -710,19 +659,14 @@ $log_entry" "$LEARNINGS_PATH" 2>/dev/null || \
 start_ralph_loop() {
     initialize_logging
 
-    # Check for existing lock file (conflict detection)
-    if ! check_existing_lock; then
-        exit 1
-    fi
-
-    # Create lock file to prevent concurrent execution
-    create_lock_file
-
     echo ""
     echo -e "${CYAN}=== Pure Ralph Loop ===${NC}"
     echo -e "${GRAY}PRD: $PRD_PATH${NC}"
     echo -e "${GRAY}Target: $TARGET_REPO${NC}"
     echo -e "${GRAY}Log: $LOG_FILE${NC}"
+
+    # Initialize .hq directory (copy prompt.md and prd.json if missing)
+    initialize_hq_directory
 
     # Check for beads CLI availability
     if check_beads_cli; then

@@ -40,11 +40,15 @@ param(
 # Configuration
 # ============================================================================
 
-$BasePromptPath = Join-Path $HqPath "prompts/pure-ralph-base.md"
+$HqBasePromptPath = Join-Path $HqPath "prompts/pure-ralph-base.md"
 $ProjectName = (Split-Path (Split-Path $PrdPath -Parent) -Leaf)
 $LogDir = Join-Path $HqPath "workspace/orchestrator/$ProjectName"
 $LogFile = Join-Path $LogDir "pure-ralph.log"
-$LockFile = Join-Path $TargetRepo ".pure-ralph.lock"
+
+# .hq/ directory paths in target repo
+$HqDir = Join-Path $TargetRepo ".hq"
+$RepoPromptPath = Join-Path $HqDir "prompt.md"
+$RepoPrdPath = Join-Path $HqDir "prd.json"
 
 # Create log directory
 New-Item -ItemType Directory -Path $LogDir -Force | Out-Null
@@ -52,6 +56,52 @@ New-Item -ItemType Directory -Path $LogDir -Force | Out-Null
 # ============================================================================
 # Functions
 # ============================================================================
+
+function Initialize-HqDirectory {
+    # Create .hq directory if missing
+    if (-not (Test-Path $HqDir)) {
+        Write-Log "Creating .hq directory in target repo"
+        New-Item -ItemType Directory -Path $HqDir -Force | Out-Null
+    }
+
+    # Copy prompt.md if missing
+    if (-not (Test-Path $RepoPromptPath)) {
+        Write-Log "Copying prompt template to $RepoPromptPath"
+        if (Test-Path $HqBasePromptPath) {
+            # Read the base prompt and substitute TARGET_REPO
+            $promptContent = Get-Content $HqBasePromptPath -Raw
+            $promptContent = $promptContent -replace '\{\{TARGET_REPO\}\}', $TargetRepo
+            $promptContent | Out-File -FilePath $RepoPromptPath -Encoding utf8
+            Write-Log "Prompt template created at $RepoPromptPath" "SUCCESS"
+        } else {
+            Write-Log "Base prompt not found at $HqBasePromptPath" "ERROR"
+            exit 1
+        }
+    } else {
+        Write-Log "Using existing prompt at $RepoPromptPath"
+    }
+
+    # Copy prd.json if missing
+    if (-not (Test-Path $RepoPrdPath)) {
+        Write-Log "Copying PRD to $RepoPrdPath"
+        if (Test-Path $PrdPath) {
+            # Read the HQ PRD and add sync_metadata
+            $prdContent = Get-Content $PrdPath -Raw | ConvertFrom-Json
+            $prdContent | Add-Member -NotePropertyName "sync_metadata" -NotePropertyValue @{
+                synced_at = (Get-Date -Format "o")
+                synced_from = $PrdPath
+                synced_by = "pure-ralph-init"
+            } -Force
+            $prdContent | ConvertTo-Json -Depth 10 | Out-File -FilePath $RepoPrdPath -Encoding utf8
+            Write-Log "PRD copied to $RepoPrdPath" "SUCCESS"
+        } else {
+            Write-Log "HQ PRD not found at $PrdPath" "ERROR"
+            exit 1
+        }
+    } else {
+        Write-Log "Using existing PRD at $RepoPrdPath"
+    }
+}
 
 function Write-Log {
     param([string]$Message, [string]$Level = "INFO")
@@ -67,87 +117,9 @@ function Write-Log {
     }
 }
 
-function Create-LockFile {
-    $lockContent = @{
-        project = $ProjectName
-        pid = $PID
-        started_at = (Get-Date -Format "o")
-    } | ConvertTo-Json
-    $lockContent | Out-File -FilePath $LockFile -Encoding utf8
-    Write-Log "Lock file created: $LockFile"
-}
-
-function Remove-LockFile {
-    if (Test-Path $LockFile) {
-        Remove-Item -Path $LockFile -Force
-        Write-Log "Lock file removed: $LockFile"
-    }
-}
-
-function Check-ExistingLock {
-    if (Test-Path $LockFile) {
-        try {
-            $lockContent = Get-Content $LockFile -Raw | ConvertFrom-Json
-            $lockProject = $lockContent.project
-            $lockPid = $lockContent.pid
-            $lockStarted = [DateTime]::Parse($lockContent.started_at)
-            $duration = (Get-Date) - $lockStarted
-            $durationStr = "{0:hh\:mm\:ss}" -f $duration
-
-            Write-Host ""
-            Write-Host "=== WARNING: Lock File Detected ===" -ForegroundColor Yellow
-            Write-Host "Another pure-ralph loop may be running on this repo." -ForegroundColor Yellow
-            Write-Host ""
-            Write-Host "  Project: $lockProject" -ForegroundColor Gray
-            Write-Host "  PID: $lockPid" -ForegroundColor Gray
-            Write-Host "  Started: $($lockContent.started_at)" -ForegroundColor Gray
-            Write-Host "  Duration: $durationStr" -ForegroundColor Gray
-            Write-Host ""
-
-            # Check if process is still running
-            $processRunning = $false
-            try {
-                $proc = Get-Process -Id $lockPid -ErrorAction SilentlyContinue
-                if ($proc) {
-                    $processRunning = $true
-                    Write-Host "  Process Status: RUNNING" -ForegroundColor Red
-                } else {
-                    Write-Host "  Process Status: NOT RUNNING (stale lock)" -ForegroundColor Yellow
-                }
-            } catch {
-                Write-Host "  Process Status: NOT RUNNING (stale lock)" -ForegroundColor Yellow
-            }
-            Write-Host ""
-
-            Write-Log "Existing lock file found for project '$lockProject' (PID: $lockPid, Duration: $durationStr)" "WARN"
-
-            # Prompt user
-            $response = Read-Host "Another pure-ralph is running. Continue anyway? (y/N)"
-            if ($response -match "^[Yy]$") {
-                Write-Log "User chose to continue despite existing lock" "WARN"
-                Write-Host "Continuing... (existing lock will be overwritten)" -ForegroundColor Yellow
-                return $true
-            } else {
-                Write-Log "User chose to abort due to existing lock" "INFO"
-                Write-Host "Aborting." -ForegroundColor Red
-                return $false
-            }
-        } catch {
-            Write-Log "Could not parse lock file: $_" "WARN"
-            # If we can't parse the lock file, ask the user
-            $response = Read-Host "Lock file exists but couldn't be read. Continue anyway? (y/N)"
-            if ($response -match "^[Yy]$") {
-                return $true
-            } else {
-                return $false
-            }
-        }
-    }
-    return $true
-}
-
 function Get-TaskProgress {
-    $prd = Get-Content $PrdPath -Raw | ConvertFrom-Json
+    # Read from repo's .hq/prd.json
+    $prd = Get-Content $RepoPrdPath -Raw | ConvertFrom-Json
     $total = $prd.features.Count
     $complete = ($prd.features | Where-Object { $_.passes -eq $true }).Count
     return @{ Total = $total; Complete = $complete; Remaining = $total - $complete }
@@ -156,10 +128,9 @@ function Get-TaskProgress {
 function Build-Prompt {
     param([bool]$IsManual)
 
-    # Read base prompt and substitute only PRD_PATH and TARGET_REPO
-    $prompt = Get-Content $BasePromptPath -Raw
-    $prompt = $prompt -replace '\{\{PRD_PATH\}\}', $PrdPath
-    $prompt = $prompt -replace '\{\{TARGET_REPO\}\}', $TargetRepo
+    # Read prompt from repo's .hq/prompt.md (already has TARGET_REPO substituted)
+    # No PRD_PATH substitution needed - prompt references .hq/prd.json directly
+    $prompt = Get-Content $RepoPromptPath -Raw
 
     # In manual mode, add instruction for user to close window
     if ($IsManual) {
@@ -204,27 +175,20 @@ Write-Log "PRD: $PrdPath"
 Write-Log "Target: $TargetRepo"
 Write-Log "Mode: $modeLabel"
 
-# Check for existing lock file (conflict detection)
-if (-not (Check-ExistingLock)) {
-    exit 1
-}
+# Initialize .hq directory (copy prompt.md and prd.json if missing)
+Initialize-HqDirectory
 
-# Create lock file to prevent concurrent execution
-Create-LockFile
+# Build the prompt from .hq/prompt.md (no PRD_PATH substitution needed)
+$prompt = Build-Prompt -IsManual $Manual
+$promptFile = Join-Path $LogDir "current-prompt.md"
+$prompt | Out-File -FilePath $promptFile -Encoding utf8
 
-# Ensure lock file is removed on exit (success or failure)
-try {
-    # Build the prompt ONCE (only PRD_PATH and TARGET_REPO substituted)
-    $prompt = Build-Prompt -IsManual $Manual
-    $promptFile = Join-Path $LogDir "current-prompt.md"
-    $prompt | Out-File -FilePath $promptFile -Encoding utf8
+Write-Log "Prompt built and saved to $promptFile"
 
-    Write-Log "Prompt built and saved to $promptFile"
+$iteration = 0
+$maxIterations = 50
 
-    $iteration = 0
-    $maxIterations = 50
-
-    while ($iteration -lt $maxIterations) {
+while ($iteration -lt $maxIterations) {
     $iteration++
 
     $progress = Get-TaskProgress
@@ -293,20 +257,15 @@ exit
     Start-Sleep -Seconds 2
 }
 
-    if ($iteration -ge $maxIterations) {
-        Write-Log "Safety limit reached ($maxIterations iterations)" "WARN"
-    }
-
-    # Final summary
-    $progress = Get-TaskProgress
-    Write-Host ""
-    Write-Host "=== Final Summary ===" -ForegroundColor Cyan
-    Write-Host "Completed: $($progress.Complete)/$($progress.Total) tasks" -ForegroundColor $(if ($progress.Remaining -eq 0) { "Green" } else { "Yellow" })
-    Write-Host "Log: $LogFile" -ForegroundColor Gray
-
-    Write-Log "Loop ended. Final: $($progress.Complete)/$($progress.Total) complete"
+if ($iteration -ge $maxIterations) {
+    Write-Log "Safety limit reached ($maxIterations iterations)" "WARN"
 }
-finally {
-    # Always remove lock file on exit (success or failure)
-    Remove-LockFile
-}
+
+# Final summary
+$progress = Get-TaskProgress
+Write-Host ""
+Write-Host "=== Final Summary ===" -ForegroundColor Cyan
+Write-Host "Completed: $($progress.Complete)/$($progress.Total) tasks" -ForegroundColor $(if ($progress.Remaining -eq 0) { "Green" } else { "Yellow" })
+Write-Host "Log: $LogFile" -ForegroundColor Gray
+
+Write-Log "Loop ended. Final: $($progress.Complete)/$($progress.Total) complete"

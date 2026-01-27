@@ -2,7 +2,7 @@
 
 You are executing the Pure Ralph Loop. Read the PRD, pick ONE task, complete it, update the PRD.
 
-**PRD Path:** {{PRD_PATH}}
+**PRD Path:** .hq/prd.json
 **Target Repo:** {{TARGET_REPO}}
 
 ---
@@ -62,7 +62,7 @@ This is a **HARD BLOCK**, not a warning. Committing to main is NEVER acceptable 
 
 1. **BRANCH** - Ensure you're on `feature/{{PROJECT_NAME}}` (create if needed)
 2. **SYNC** - Pull from repo, resolve any conflicts (see "Distributed Tracking - Integrated Workflow")
-3. **READ** the PRD at {{PRD_PATH}}
+3. **READ** the PRD at .hq/prd.json
 4. **PICK** the highest priority incomplete task (check claims, prefer unclaimed tasks)
 5. **CLAIM** the selected task before starting work
 6. **IMPLEMENT** that ONE task
@@ -365,28 +365,29 @@ After completing a task and updating the PRD, push the status to the target repo
 
 ### push_to_repo Function
 
-Execute this after each successful task completion (after PRD update, before or as part of commit):
+Execute this after each successful task completion (after PRD update, before or as part of commit).
+
+Since the prompt now reads directly from .hq/prd.json, changes are already in the repo. The push_to_repo function ensures:
+1. The .hq/prd.json has sync_metadata for tracking
+2. Changes are committed
 
 ```
 PUSH_TO_REPO:
-  1. Create .hq/ directory in target repo if missing:
-     mkdir -p {target_repo}/.hq
-
-  2. Read the local PRD from {{PRD_PATH}}
-
-  3. Add sync_metadata to create the distributed copy:
+  1. Ensure .hq/prd.json has sync_metadata:
      {
        ...full PRD contents...,
        "sync_metadata": {
          "synced_at": "<ISO 8601 timestamp>",
-         "synced_from": "{{PRD_PATH}}",
+         "synced_from": ".hq/prd.json",
          "synced_by": "pure-ralph"
        }
      }
 
-  4. Write to {target_repo}/.hq/prd.json
+  2. If sync_metadata doesn't exist, add it
 
-  5. Commit with message: "sync: update distributed tracking"
+  3. Update sync_metadata.synced_at to current timestamp
+
+  4. Stage .hq/prd.json for commit (included with task commit)
 ```
 
 ### What Gets Synced
@@ -449,38 +450,31 @@ Before starting work, check if the target repo has distributed tracking data tha
 
 ### pull_from_repo Function
 
-Execute this at the start of each Pure Ralph session (after branch verification, before task selection):
+Execute this at the start of each Pure Ralph session (after branch verification, before task selection).
+
+Since the prompt now reads directly from .hq/prd.json, the pull is about refreshing from git to get other contributors' changes:
 
 ```
 PULL_FROM_REPO:
-  1. Check if distributed tracking file exists:
-     if [ -f "{target_repo}/.hq/prd.json" ]; then
-         echo "Distributed tracking found"
-     else
-         echo "No distributed tracking - skip pull"
-         # Continue with local PRD only
+  1. Pull latest from remote (if on a tracking branch):
+     git pull --rebase origin feature/{project-name} 2>/dev/null || true
+
+  2. Check if .hq/prd.json exists:
+     if [ ! -f ".hq/prd.json" ]; then
+         echo "No .hq/prd.json found - will be created"
+         # Script handles initial setup
      fi
 
-  2. If exists, read both files:
-     - Remote: {target_repo}/.hq/prd.json
-     - Local: {{PRD_PATH}}
+  3. If .hq/prd.json exists, read and validate:
+     - Check for merge conflicts (<<<<<<< markers)
+     - Verify JSON is valid
+     - Report current task progress
 
-  3. Compare features arrays by task ID:
-     For each task, check:
-     - passes: local vs remote (has status changed?)
-     - notes: local vs remote (has implementation detail changed?)
-     - acceptance_criteria: local vs remote (has scope changed?)
-
-  4. Generate diff summary (DO NOT auto-overwrite):
-     DIFF SUMMARY:
-     - Tasks added in repo: [list task IDs not in local]
-     - Tasks removed in repo: [list task IDs not in repo]
-     - Tasks with different status: [list task IDs where passes differs]
-     - Tasks with updated notes: [list task IDs where notes differs]
-
-  5. If differences found, WARN but continue:
-     "WARNING: Local and repo PRDs differ. Review before proceeding."
-     "Use /sync-tasks {project} to merge changes."
+  4. Report current state:
+     CURRENT STATE:
+     - Total tasks: X
+     - Completed: Y
+     - Remaining: Z
 ```
 
 ### Diff Detection Logic
@@ -675,19 +669,18 @@ After user confirms, write to BOTH locations:
 ```
 APPLY_MERGE:
   1. Construct merged PRD:
-     - Start with local PRD as base
+     - Start with current .hq/prd.json as base
      - Apply resolved changes per task
      - Update sync_metadata.merged_at = now()
      - Add sync_metadata.merge_source = "conflict_resolution"
 
-  2. Write to local PRD:
-     {{PRD_PATH}}
+  2. Write merged result to .hq/prd.json
 
-  3. Write to repo distributed tracking:
-     {target_repo}/.hq/prd.json
+  3. Stage for commit:
+     git add .hq/prd.json
 
   4. Report success:
-     "Merge complete. Written to both local and repo."
+     "Merge complete. Written to .hq/prd.json"
 ```
 
 ### Example Merge Flow
@@ -983,18 +976,15 @@ Execute before reading the PRD:
 ```
 LOOP_START:
   1. pull_from_repo()
-     - Check if {target_repo}/.hq/prd.json exists
-     - Compare with local {{PRD_PATH}}
-     - Generate diff summary
+     - Pull latest from remote if tracking branch exists
+     - Check if .hq/prd.json exists (script creates if not)
+     - Validate JSON and check for merge conflicts
 
-  2. If differences found:
-     - Show diff summary
-     - Run conflict resolution (see Conflict Resolution section)
-     - Apply merge if user approves
-     - Continue with merged PRD
+  2. If merge conflicts in .hq/prd.json:
+     - Resolve git conflicts
+     - Ensure valid JSON
 
-  3. If no differences or no .hq/prd.json:
-     - Continue with local PRD
+  3. Continue with .hq/prd.json
 ```
 
 ### Before Each Task (During Task Selection)

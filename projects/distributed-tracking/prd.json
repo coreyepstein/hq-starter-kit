@@ -171,8 +171,9 @@
         "prompts/pure-ralph-base.md"
       ],
       "dependsOn": ["US-001"],
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Worker: knowledge-curator. Selection reason: Documentation and script modification task. Updated structure.md to document prompt.md in .hq/ directory with explanation of portability benefits. Updated pure-ralph-loop.ps1 and pure-ralph-loop.sh with Initialize-HqDirectory/initialize_hq_directory functions that: (1) create .hq/ directory if missing, (2) copy prompt.md from HQ with TARGET_REPO substituted, (3) copy prd.json from HQ with sync_metadata added. Updated prompts/pure-ralph-base.md to reference .hq/prd.json directly instead of {{PRD_PATH}}. Scripts now use repo's .hq/prompt.md and .hq/prd.json for all operations.",
+      "updated_at": "2026-01-27T22:00:00Z"
     }
   ],
   "metadata": {

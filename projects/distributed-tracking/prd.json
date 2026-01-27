@@ -114,8 +114,9 @@
       ],
       "files": ["prompts/pure-ralph-base.md"],
       "dependsOn": ["US-002", "US-003", "US-006"],
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Worker: knowledge-curator. Selection reason: Documentation task adding workflow instructions to prompt file. Added 'Distributed Tracking - Integrated Workflow' section with: session lifecycle diagram, LOOP_START (pull + conflicts), BEFORE_TASK (check claims, display status, claim), AFTER_TASK (push + release), LOOP_COMPLETE (final push, verify claims, create PR), error recovery table, and quick reference table. Updated 'Your Job (Every Session)' section to include sync, claim, push, and release steps.",
+      "updated_at": "2026-01-27T19:30:00Z"
     },
     {
       "id": "US-008",

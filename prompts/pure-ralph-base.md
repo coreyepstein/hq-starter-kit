@@ -61,14 +61,17 @@ This is a **HARD BLOCK**, not a warning. Committing to main is NEVER acceptable 
 ## Your Job (Every Session)
 
 1. **BRANCH** - Ensure you're on `feature/{{PROJECT_NAME}}` (create if needed)
-2. **READ** the PRD at {{PRD_PATH}}
-3. **PICK** the highest priority incomplete task (where `passes` is false/null and dependencies are met)
-4. **IMPLEMENT** that ONE task
-5. **UPDATE** the PRD: set `passes: true` and fill in `notes` with what you did
-6. **COMMIT** with message: `feat(TASK-ID): Brief description`
-7. **CHECK** if all tasks complete:
-   - **If more tasks remain:** EXIT - the loop will spawn a fresh session
-   - **If all tasks complete:** CREATE PR (see "PR Creation" section below), then EXIT
+2. **SYNC** - Pull from repo, resolve any conflicts (see "Distributed Tracking - Integrated Workflow")
+3. **READ** the PRD at {{PRD_PATH}}
+4. **PICK** the highest priority incomplete task (check claims, prefer unclaimed tasks)
+5. **CLAIM** the selected task before starting work
+6. **IMPLEMENT** that ONE task
+7. **UPDATE** the PRD: set `passes: true`, fill in `notes`, add `updated_at` timestamp
+8. **PUSH** - Push status to repo, release claim
+9. **COMMIT** with message: `feat(TASK-ID): Brief description` (include `.hq/` files)
+10. **CHECK** if all tasks complete:
+    - **If more tasks remain:** EXIT - the loop will spawn a fresh session
+    - **If all tasks complete:** Final push, CREATE PR (see "PR Creation" section below), then EXIT
 
 ---
 
@@ -924,6 +927,176 @@ TASK_SELECTION_WITH_CLAIMS:
   "updated_at": "2026-01-27T14:30:00Z"
 }
 ```
+
+---
+
+## Distributed Tracking - Integrated Workflow
+
+This section ties together all distributed tracking functions into the Pure Ralph loop lifecycle. Follow this workflow every session.
+
+### Session Lifecycle with Distributed Tracking
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                      PURE RALPH SESSION                             │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                     │
+│  1. BRANCH VERIFICATION                                             │
+│     └── Ensure on feature/{project-name}                           │
+│                                                                     │
+│  2. DISTRIBUTED SYNC (start of session)          ← NEW             │
+│     ├── pull_from_repo()                                           │
+│     ├── If conflicts → run conflict resolution                     │
+│     └── Continue with synced PRD                                   │
+│                                                                     │
+│  3. TASK SELECTION                                                  │
+│     ├── Find eligible tasks (passes=false, deps met)               │
+│     ├── check_claim() for each candidate          ← NEW            │
+│     ├── Prefer unclaimed tasks                                     │
+│     └── claim_task() on selected task             ← NEW            │
+│                                                                     │
+│  4. IMPLEMENTATION                                                  │
+│     └── Complete the task                                          │
+│                                                                     │
+│  5. PRD UPDATE                                                      │
+│     ├── Set passes: true, add notes                                │
+│     └── Add updated_at timestamp                   ← NEW           │
+│                                                                     │
+│  6. POST-TASK SYNC                                ← NEW             │
+│     ├── push_to_repo()                                             │
+│     └── release_claim()                                            │
+│                                                                     │
+│  7. COMMIT                                                          │
+│     └── Include .hq/ files in commit                               │
+│                                                                     │
+│  8. LOOP CHECK                                                      │
+│     ├── If more tasks → EXIT (new session)                         │
+│     └── If all complete → push final, create PR                    │
+│                                                                     │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+### On Loop Start (After Branch Verification)
+
+Execute before reading the PRD:
+
+```
+LOOP_START:
+  1. pull_from_repo()
+     - Check if {target_repo}/.hq/prd.json exists
+     - Compare with local {{PRD_PATH}}
+     - Generate diff summary
+
+  2. If differences found:
+     - Show diff summary
+     - Run conflict resolution (see Conflict Resolution section)
+     - Apply merge if user approves
+     - Continue with merged PRD
+
+  3. If no differences or no .hq/prd.json:
+     - Continue with local PRD
+```
+
+### Before Each Task (During Task Selection)
+
+Execute after identifying eligible tasks, before selecting one:
+
+```
+BEFORE_TASK:
+  1. List all eligible tasks (passes=false, dependencies met)
+
+  2. For each eligible task:
+     check_claim(task.id)
+     - If claimed (not expired): mark as "claimed by {x}"
+     - If available (no claim or expired): mark as "available"
+
+  3. Display task list with claim status:
+     ┌──────────────────────────────────────────────────────────┐
+     │ Eligible Tasks:                                          │
+     │   US-007 [AVAILABLE] - Integrate with pure-ralph loop   │
+     │   US-008 [CLAIMED by stefan, 2h ago] - Add /sync-tasks  │
+     │   US-010 [AVAILABLE] - Add prompt templating            │
+     └──────────────────────────────────────────────────────────┘
+
+  4. Select an AVAILABLE task (prefer available over claimed)
+
+  5. claim_task(selected_task.id)
+     - Write claim to {target_repo}/.hq/claims.json
+     - Claim expires in 24 hours
+```
+
+### After Each Task (Before Commit)
+
+Execute after updating PRD, before committing:
+
+```
+AFTER_TASK:
+  1. Ensure PRD has updated_at on the completed task:
+     {
+       "id": "{task_id}",
+       "passes": true,
+       "notes": "...",
+       "updated_at": "{ISO 8601 now}"  ← Required for conflict resolution
+     }
+
+  2. push_to_repo()
+     - Write updated PRD to {target_repo}/.hq/prd.json
+     - Include sync_metadata
+
+  3. release_claim(task.id)
+     - Remove claim from {target_repo}/.hq/claims.json
+
+  4. Stage distributed tracking files with task files:
+     git add {task_files} {target_repo}/.hq/prd.json {target_repo}/.hq/claims.json
+```
+
+### On Loop Complete (All Tasks Done)
+
+Execute when all tasks have passes=true:
+
+```
+LOOP_COMPLETE:
+  1. Final push_to_repo()
+     - Ensure .hq/prd.json reflects all completed tasks
+
+  2. Verify no orphaned claims:
+     - Read claims.json
+     - Remove any claims for this session (should already be released)
+     - Commit if changes made
+
+  3. Create PR (see PR Creation section)
+     - Include .hq/ directory in PR
+     - PR enables distributed visibility of completed work
+```
+
+### Error Recovery
+
+If a session crashes or exits unexpectedly:
+
+| Situation | Recovery |
+|-----------|----------|
+| Task claimed but not completed | Claim expires in 24h; next session can claim |
+| PRD updated locally but not pushed | Next session will push; conflict resolution handles |
+| Claim not released after completion | Claim expires automatically; no manual action needed |
+| Merge conflict on .hq/claims.json | Use git merge strategy; newer timestamps win |
+
+### Quick Reference: Session Steps
+
+Updated session workflow with distributed tracking:
+
+| Step | Action | Distributed Tracking |
+|------|--------|---------------------|
+| 1 | Verify branch | - |
+| 2 | **Sync** | pull_from_repo, resolve conflicts |
+| 3 | Read PRD | - |
+| 4 | Pick task | check_claim for each, prefer unclaimed |
+| 5 | **Claim** | claim_task before starting |
+| 6 | Implement | - |
+| 7 | Update PRD | Include updated_at |
+| 8 | **Push** | push_to_repo |
+| 9 | **Release** | release_claim |
+| 10 | Commit | Include .hq/ files |
+| 11 | Check complete | If all done: final push, create PR |
 
 ---
 

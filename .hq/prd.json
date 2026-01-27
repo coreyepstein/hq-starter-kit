@@ -153,5 +153,10 @@
     "created_at": "2026-01-27T12:00:00Z",
     "created_by": "stefan",
     "purpose": "Enable distributed teams to share PRD/task status via git"
+  },
+  "sync_metadata": {
+    "synced_at": "2026-01-27T08:42:58-08:00",
+    "synced_from": "C:/my-hq/projects/distributed-tracking/prd.json",
+    "synced_by": "pure-ralph"
   }
 }

@@ -488,6 +488,114 @@ The combined approach is preferred as it keeps task completion and status in ato
 
 ---
 
+## Distributed Tracking - Pull from Repo
+
+Before starting work, check if the target repo has distributed tracking data that may contain updates from other contributors.
+
+### pull_from_repo Function
+
+Execute this at the start of each Pure Ralph session (after branch verification, before task selection):
+
+```
+PULL_FROM_REPO:
+  1. Check if distributed tracking file exists:
+     if [ -f "{target_repo}/.hq/prd.json" ]; then
+         echo "Distributed tracking found"
+     else
+         echo "No distributed tracking - skip pull"
+         # Continue with local PRD only
+     fi
+
+  2. If exists, read both files:
+     - Remote: {target_repo}/.hq/prd.json
+     - Local: {{PRD_PATH}}
+
+  3. Compare features arrays by task ID:
+     For each task, check:
+     - passes: local vs remote (has status changed?)
+     - notes: local vs remote (has implementation detail changed?)
+     - acceptance_criteria: local vs remote (has scope changed?)
+
+  4. Generate diff summary (DO NOT auto-overwrite):
+     DIFF SUMMARY:
+     - Tasks added in repo: [list task IDs not in local]
+     - Tasks removed in repo: [list task IDs not in repo]
+     - Tasks with different status: [list task IDs where passes differs]
+     - Tasks with updated notes: [list task IDs where notes differs]
+
+  5. If differences found, WARN but continue:
+     "WARNING: Local and repo PRDs differ. Review before proceeding."
+     "Use /sync-tasks {project} to merge changes."
+```
+
+### Diff Detection Logic
+
+Compare tasks by ID and report differences:
+
+```
+For each task in LOCAL PRD:
+  If task.id NOT in REPO → "Task {id} exists locally but not in repo"
+  If task.passes != repo_task.passes → "Task {id} status differs (local: {x}, repo: {y})"
+  If task.notes != repo_task.notes → "Task {id} notes differ"
+
+For each task in REPO PRD:
+  If task.id NOT in LOCAL → "Task {id} exists in repo but not locally"
+```
+
+### What Gets Compared
+
+| Field | Compare? | Why |
+|-------|----------|-----|
+| `id` | Key | Used to match tasks across PRDs |
+| `passes` | Yes | Status changes indicate work done |
+| `notes` | Yes | Implementation details may have changed |
+| `acceptance_criteria` | Yes | Scope changes need attention |
+| `title` | No | Minor wording changes don't matter |
+| `description` | No | Details don't affect task matching |
+| `dependsOn` | Yes | Dependency changes affect execution order |
+
+### Example Output
+
+```
+PULL_FROM_REPO: Checking {target_repo}/.hq/prd.json...
+
+DIFF SUMMARY:
+┌─────────────────────────────────────────────────────────┐
+│ Tasks with different status:                            │
+│   - US-003: local=false, repo=true                      │
+│   - US-005: local=false, repo=true                      │
+│                                                         │
+│ Tasks with updated notes:                               │
+│   - US-003: "Worker: backend-dev. Implemented..."       │
+│                                                         │
+│ Tasks added in repo (not in local):                     │
+│   - US-010: "Add retry logic for sync failures"        │
+└─────────────────────────────────────────────────────────┘
+
+WARNING: Local and repo PRDs differ.
+- 2 tasks completed in repo but not locally
+- 1 new task exists in repo
+
+Recommendation: Run conflict resolution before continuing.
+```
+
+### Important: No Auto-Overwrite
+
+The pull_from_repo function:
+- **READS** the repo PRD
+- **COMPARES** with local PRD
+- **REPORTS** differences
+- **DOES NOT** automatically overwrite either file
+
+This is intentional - automatic overwrites could:
+- Lose local work in progress
+- Create confusing state if tasks were worked on in parallel
+- Make debugging harder when things go wrong
+
+Conflict resolution (US-004) handles the merge decision.
+
+---
+
 ## Self-Improvement
 
 This prompt can evolve. If you learn something valuable:

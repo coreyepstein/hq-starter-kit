@@ -592,7 +592,191 @@ This is intentional - automatic overwrites could:
 - Create confusing state if tasks were worked on in parallel
 - Make debugging harder when things go wrong
 
-Conflict resolution (US-004) handles the merge decision.
+Conflict resolution (below) handles the merge decision.
+
+---
+
+## Distributed Tracking - Conflict Resolution
+
+When local and repo PRDs differ, use this process to resolve conflicts and merge changes.
+
+### When to Use
+
+Run conflict resolution when:
+- `pull_from_repo` reports differences
+- You're about to start work and suspect others have been working on the same project
+- Manual sync via `/sync-tasks` detects conflicts
+
+### Task-Level Diff Display
+
+For each task with differences, show a detailed comparison:
+
+```
+CONFLICT: Task {task_id} - {title}
+┌─────────────────────────────────────────────────────────────┐
+│ Field          │ Local                │ Repo                │
+├────────────────┼──────────────────────┼─────────────────────┤
+│ passes         │ false                │ true                │
+│ notes          │ (empty)              │ "Worker: backend..."│
+│ updated_at     │ 2026-01-26T10:00:00Z │ 2026-01-27T14:30:00Z│
+└─────────────────────────────────────────────────────────────┘
+
+Repo is newer (2026-01-27T14:30:00Z vs 2026-01-26T10:00:00Z)
+Recommendation: Accept repo version
+```
+
+### Merge Strategy: Per-Task, Newer Wins
+
+The merge strategy operates at the **task level**, not the PRD level:
+
+```
+MERGE_STRATEGY:
+  For each task in either PRD:
+    1. If task exists only in LOCAL → keep in merged result
+    2. If task exists only in REPO → add to merged result
+    3. If task exists in BOTH with differences:
+       a. Compare updated_at timestamps
+       b. If repo.updated_at > local.updated_at → use repo version
+       c. If local.updated_at > repo.updated_at → use local version
+       d. If timestamps equal or missing → prompt user
+```
+
+### updated_at Requirement
+
+For conflict resolution to work automatically, tasks should include `updated_at`:
+
+```json
+{
+  "id": "US-003",
+  "title": "Add pull-from-repo function",
+  "passes": true,
+  "notes": "Worker: backend-dev...",
+  "updated_at": "2026-01-27T14:30:00Z"
+}
+```
+
+**Important:** When updating a task's `passes` or `notes`, always update `updated_at` to current timestamp.
+
+If `updated_at` is missing from both versions, fall back to manual resolution.
+
+### User Confirmation Prompt
+
+Before applying any merge, prompt the user:
+
+```
+MERGE PREVIEW:
+┌─────────────────────────────────────────────────────────────┐
+│ Changes to apply:                                           │
+│                                                             │
+│ ACCEPT FROM REPO (newer):                                   │
+│   - US-003: passes false → true                            │
+│   - US-003: notes updated with implementation details       │
+│                                                             │
+│ KEEP LOCAL (newer):                                         │
+│   - US-007: acceptance_criteria refined                     │
+│                                                             │
+│ ADD FROM REPO (new tasks):                                  │
+│   - US-010: "Add retry logic for sync failures"            │
+│                                                             │
+│ REQUIRES MANUAL DECISION (no timestamp or equal):           │
+│   - US-005: Both modified, cannot auto-resolve             │
+└─────────────────────────────────────────────────────────────┘
+
+Proceed with merge? [y/n/manual]
+- y: Apply automatic resolution for timestamped tasks, skip manual ones
+- n: Cancel merge, keep local unchanged
+- manual: Review each conflict individually
+```
+
+### Manual Resolution (Interactive)
+
+When user selects `manual` or for tasks without timestamps:
+
+```
+CONFLICT: US-005 - Add duplicate work detection
+No clear winner (timestamps missing or equal)
+
+LOCAL version:
+  passes: false
+  notes: "Started implementation, WIP"
+
+REPO version:
+  passes: false
+  notes: "Blocked on US-001 clarification"
+
+Choose:
+  [L] Use LOCAL version
+  [R] Use REPO version
+  [M] Merge manually (edit notes)
+  [S] Skip (leave in conflict state)
+
+Selection: _
+```
+
+### Writing Merged Result
+
+After user confirms, write to BOTH locations:
+
+```
+APPLY_MERGE:
+  1. Construct merged PRD:
+     - Start with local PRD as base
+     - Apply resolved changes per task
+     - Update sync_metadata.merged_at = now()
+     - Add sync_metadata.merge_source = "conflict_resolution"
+
+  2. Write to local PRD:
+     {{PRD_PATH}}
+
+  3. Write to repo distributed tracking:
+     {target_repo}/.hq/prd.json
+
+  4. Report success:
+     "Merge complete. Written to both local and repo."
+```
+
+### Example Merge Flow
+
+```
+$ Starting Pure Ralph session...
+
+PULL_FROM_REPO: Checking C:/my-repo/.hq/prd.json...
+Found differences - initiating conflict resolution.
+
+CONFLICT: US-003 - Add pull-from-repo function
+┌─────────────────────────────────────────────────────────────┐
+│ Field          │ Local                │ Repo                │
+├────────────────┼──────────────────────┼─────────────────────┤
+│ passes         │ false                │ true                │
+│ notes          │ (empty)              │ "Worker: backend..."│
+│ updated_at     │ -                    │ 2026-01-27T14:30:00Z│
+└─────────────────────────────────────────────────────────────┘
+Repo has timestamp, local doesn't → Accept repo version
+
+MERGE PREVIEW:
+  ACCEPT FROM REPO: US-003 (completed by another contributor)
+
+Proceed with merge? [y/n/manual]: y
+
+Applying merge...
+✓ Updated local PRD: C:/my-hq/projects/my-project/prd.json
+✓ Updated repo PRD: C:/my-repo/.hq/prd.json
+
+Merge complete. Continuing with task selection...
+```
+
+### Conflict States
+
+Tasks can be in these conflict states:
+
+| State | Meaning | Resolution |
+|-------|---------|------------|
+| `no_conflict` | Local and repo match | No action needed |
+| `repo_newer` | Repo has newer updated_at | Auto-accept repo |
+| `local_newer` | Local has newer updated_at | Auto-keep local |
+| `manual_required` | No timestamps or equal | User decides |
+| `new_in_repo` | Task only in repo | Auto-add to local |
+| `new_in_local` | Task only in local | Auto-add to repo |
 
 ---
 

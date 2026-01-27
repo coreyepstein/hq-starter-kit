@@ -65,8 +65,8 @@
       ],
       "files": ["prompts/pure-ralph-base.md"],
       "dependsOn": ["US-003"],
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Worker: knowledge-curator. Selection reason: Documentation task adding instructions to prompt file. Added 'Distributed Tracking - Conflict Resolution' section with: task-level diff display format, merge strategy (per-task, newer updated_at wins), updated_at requirement documentation, user confirmation prompt with y/n/manual options, manual resolution flow, write-to-both-locations process, example merge flow, and conflict states table."
     },
     {
       "id": "US-005",

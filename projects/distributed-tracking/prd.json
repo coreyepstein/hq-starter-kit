@@ -81,8 +81,8 @@
       ],
       "files": [".claude/commands/prd.md"],
       "dependsOn": ["US-001"],
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Added Step 2.5 'Check for Duplicate Work (Distributed Tracking)' to prd.md. Includes: bash script to check for .hq/prd.json, task table display, fuzzy matching logic (normalize, exact/contains/word overlap >50%), and A/B/C prompt before proceeding."
     },
     {
       "id": "US-006",

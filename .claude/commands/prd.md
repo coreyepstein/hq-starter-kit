@@ -51,6 +51,52 @@ Ask for project slug. Check if `projects/{name}` exists:
 - If exists: "Project exists. Continue editing or choose different name?"
 - If new: proceed
 
+## Step 2.5: Check for Duplicate Work (Distributed Tracking)
+
+Before starting discovery, check if work already exists in the target repo:
+
+```bash
+# Check if distributed tracking exists in target repo
+TARGET_REPO="${TARGET_REPO:-$(pwd)}"
+if [ -f "$TARGET_REPO/.hq/prd.json" ]; then
+    cat "$TARGET_REPO/.hq/prd.json"
+fi
+```
+
+**If `.hq/prd.json` exists:**
+
+1. Parse and show existing tasks:
+   ```
+   Found existing distributed work in this repo:
+
+   | ID | Title | Status |
+   |----|-------|--------|
+   | US-001 | Example task | ✓ complete |
+   | US-002 | Another task | pending |
+   ```
+
+2. Fuzzy match user's description against existing task titles:
+   - Normalize: lowercase, remove punctuation
+   - Check for: exact match, contains match, word overlap > 50%
+   - If match found:
+     ```
+     ⚠️ Potential duplicate detected:
+     Your request: "add user authentication"
+     Existing task: "US-003: Add user auth flow" (pending)
+
+     Similarity: 78% word overlap
+     ```
+
+3. Ask user before proceeding:
+   ```
+   Options:
+   A. Add to existing project (extend .hq/prd.json)
+   B. Create separate project (new projects/{name}/)
+   C. Cancel and review existing work first
+   ```
+
+**If no `.hq/prd.json` exists:** Proceed to Step 3.
+
 ## Step 3: Discovery Interview
 
 Ask questions in batches. Format:

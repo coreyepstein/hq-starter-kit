@@ -98,8 +98,8 @@
       ],
       "files": ["prompts/pure-ralph-base.md", "knowledge/distributed-tracking/structure.md"],
       "dependsOn": ["US-001"],
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Worker: knowledge-curator. Selection reason: Documentation task adding instructions to prompt file. Added 'Distributed Tracking - Task Claims' section with: check_claim function (reads claims.json, checks expiration, shows warning), claim_task function (generates claim record, 24h expiration), release_claim function (removes claim on completion), claim identifier formats, warning display format, and integration with task selection flow. claims.json schema was already defined in structure.md."
     },
     {
       "id": "US-007",
@@ -145,6 +145,29 @@
       ],
       "files": ["knowledge/distributed-tracking/workflow.md"],
       "dependsOn": ["US-007"],
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-010",
+      "title": "Add prompt templating to .hq/ directory",
+      "description": "Move Ralph prompt into target repo so it can evolve with the project. PRD path is no longer injected - prompt reads from .hq/prd.json directly.",
+      "acceptance_criteria": [
+        "knowledge/distributed-tracking/structure.md updated to include prompt.md in .hq/ directory",
+        ".claude/scripts/pure-ralph-loop.ps1 checks for .hq/prompt.md in target repo",
+        "If .hq/prompt.md missing: copy from HQ/prompts/pure-ralph-base.md to target repo",
+        "Script uses .hq/prompt.md instead of HQ prompt",
+        "Prompt references .hq/prd.json directly (no {{PRD_PATH}} substitution needed)",
+        ".claude/scripts/pure-ralph-loop.sh has same behavior",
+        "prompts/pure-ralph-base.md updated to use .hq/prd.json path instead of {{PRD_PATH}}"
+      ],
+      "files": [
+        "knowledge/distributed-tracking/structure.md",
+        ".claude/scripts/pure-ralph-loop.ps1",
+        ".claude/scripts/pure-ralph-loop.sh",
+        "prompts/pure-ralph-base.md"
+      ],
+      "dependsOn": ["US-001"],
       "passes": false,
       "notes": ""
     }

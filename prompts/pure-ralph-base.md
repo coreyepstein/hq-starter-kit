@@ -31,54 +31,6 @@ Extract the project name from the PRD path (e.g., `projects/my-feature/prd.json`
 
 ---
 
-## Conflict Awareness
-
-Pure Ralph sessions may run concurrently. A lock file prevents conflicts.
-
-### Lock File Location
-
-```
-{target_repo}/.pure-ralph.lock
-```
-
-### On Session Start: Check for Lock File
-
-After switching to the feature branch, check if a lock file exists:
-
-```bash
-LOCK_FILE="{{TARGET_REPO}}/.pure-ralph.lock"
-if [ -f "$LOCK_FILE" ]; then
-    echo "WARNING: Lock file detected"
-    cat "$LOCK_FILE"
-fi
-```
-
-### If Lock File Found
-
-1. **Read the lock file** to see which project owns it:
-   ```json
-   {"project": "other-project", "pid": 12345, "started_at": "2026-01-26T..."}
-   ```
-
-2. **Check if the process is still running:**
-   - **Process running:** Another Pure Ralph is active. You should WAIT or inform the user.
-   - **Process NOT running:** This is a **stale lock**. Safe to remove and continue.
-
-3. **Removing a stale lock:**
-   ```bash
-   # Only if process is NOT running
-   rm "{{TARGET_REPO}}/.pure-ralph.lock"
-   ```
-
-### Important Notes
-
-- The orchestrator script creates/removes lock files automatically
-- Claude sessions don't create lock files - they only CHECK for them
-- If you see a lock from your OWN project (same project name), it's expected - the orchestrator is managing it
-- Only worry about locks from DIFFERENT projects on the same repo
-
----
-
 ## Commit Safety
 
 **HARD BLOCK: Never commit to main/master**
@@ -780,6 +732,201 @@ Tasks can be in these conflict states:
 
 ---
 
+## Distributed Tracking - Task Claims
+
+Before starting any task, check if it's claimed by another contributor. This prevents duplicate work in distributed teams.
+
+### Claim Lifecycle
+
+1. **Before task:** Check if claimed by someone else
+2. **If available:** Claim the task
+3. **Work on task:** Implement and complete
+4. **After task:** Release the claim
+
+### check_claim Function
+
+Execute before starting any task:
+
+```
+CHECK_CLAIM:
+  1. Read claims file (create if missing):
+     claims_path = {target_repo}/.hq/claims.json
+     if [ ! -f "$claims_path" ]; then
+         echo '{"claims": [], "updated_at": null}' > "$claims_path"
+     fi
+
+  2. Parse claims and find matching task:
+     For claim in claims.claims:
+         if claim.task_id == selected_task.id:
+             Check if expired (claim.expires_at < now)
+             If NOT expired → CLAIMED by someone else
+             If expired → Available (stale claim)
+
+  3. If claimed by someone else (not expired):
+     ┌─────────────────────────────────────────────────────────────┐
+     │ WARNING: Task {task_id} is claimed                         │
+     │                                                             │
+     │ Claimed by: {claimed_by}                                    │
+     │ Claimed at: {claimed_at}                                    │
+     │ Expires at: {expires_at}                                    │
+     │                                                             │
+     │ Options:                                                    │
+     │   [S] Skip - pick a different task                         │
+     │   [W] Wait - task may be released soon                     │
+     │   [O] Override - claim anyway (use with caution)           │
+     └─────────────────────────────────────────────────────────────┘
+
+  4. If available (no claim or expired):
+     Proceed to claim_task
+```
+
+### claim_task Function
+
+Claim a task before starting work:
+
+```
+CLAIM_TASK:
+  1. Generate claim record:
+     {
+       "task_id": "{selected_task.id}",
+       "claimed_by": "{identifier}",  // e.g., "pure-ralph-{hostname}" or username
+       "claimed_at": "{ISO 8601 now}",
+       "expires_at": "{ISO 8601 now + 24 hours}",
+       "notes": "Working on: {task_title}"
+     }
+
+  2. Read current claims.json
+
+  3. Remove any existing claim for this task_id (expired or otherwise)
+
+  4. Add new claim to claims array
+
+  5. Update claims.updated_at to now
+
+  6. Write updated claims.json to {target_repo}/.hq/claims.json
+
+  7. Commit:
+     git add {target_repo}/.hq/claims.json
+     git commit -m "claim: {task_id} by {claimed_by}"
+```
+
+### Claim Expiration
+
+Claims expire after **24 hours** by default. This prevents indefinite blocking if:
+- A contributor abandons work
+- A session crashes without releasing
+- Someone forgets to release
+
+```
+EXPIRATION_RULES:
+  - Default: 24 hours from claimed_at
+  - Expired claims: Automatically considered "available"
+  - Override: Can claim even if not expired (with warning)
+  - Refresh: Re-claiming extends expiration
+```
+
+To calculate expires_at:
+```
+expires_at = claimed_at + 24 hours
+// Example: claimed_at 2026-01-27T10:00:00Z → expires_at 2026-01-28T10:00:00Z
+```
+
+### release_claim Function
+
+Release a claim after task completion:
+
+```
+RELEASE_CLAIM:
+  1. Read claims.json from {target_repo}/.hq/claims.json
+
+  2. Remove claim matching task_id:
+     claims.claims = claims.claims.filter(c => c.task_id != completed_task.id)
+
+  3. Update claims.updated_at to now
+
+  4. Write updated claims.json
+
+  5. Include in task completion commit:
+     git add {target_repo}/.hq/claims.json
+     // Include with feat(TASK-ID) commit, no separate commit needed
+```
+
+### Claim Identifier
+
+The `claimed_by` field should uniquely identify the claimer:
+
+| Context | Format | Example |
+|---------|--------|---------|
+| Pure Ralph | `pure-ralph-{hostname}` | `pure-ralph-DESKTOP-ABC` |
+| User session | `{username}` | `stefan` |
+| CI/CD | `ci-{pipeline-id}` | `ci-12345` |
+| Unknown | `anonymous-{timestamp}` | `anonymous-1706360000` |
+
+### Warning Display
+
+When a task is claimed, show a prominent warning:
+
+```
+╔═══════════════════════════════════════════════════════════════╗
+║  ⚠️  TASK CLAIMED                                              ║
+╠═══════════════════════════════════════════════════════════════╣
+║                                                               ║
+║  Task:       US-006 - Add task claim mechanism                ║
+║  Claimed by: pure-ralph-WORKSTATION                           ║
+║  Since:      2026-01-27T14:30:00Z (2 hours ago)               ║
+║  Expires:    2026-01-28T14:30:00Z (in 22 hours)               ║
+║                                                               ║
+║  This task is being worked on by another contributor.         ║
+║  Claiming it may result in duplicate work.                    ║
+║                                                               ║
+╚═══════════════════════════════════════════════════════════════╝
+
+Select action: [S]kip / [W]ait / [O]verride: _
+```
+
+### Integration with Task Selection
+
+The claim check integrates into the task selection flow:
+
+```
+TASK_SELECTION_WITH_CLAIMS:
+  1. Find eligible tasks (passes=false, dependencies met)
+  2. For each eligible task:
+     a. check_claim(task.id)
+     b. If claimed by others (not expired): mark as "claimed"
+     c. If available: mark as "available"
+  3. Prefer "available" tasks over "claimed" tasks
+  4. If only claimed tasks remain: show warning, offer options
+  5. On task selection: claim_task(selected_task.id)
+  6. After task completion: release_claim(task.id)
+```
+
+### Example claims.json
+
+```json
+{
+  "claims": [
+    {
+      "task_id": "US-006",
+      "claimed_by": "pure-ralph-WORKSTATION",
+      "claimed_at": "2026-01-27T14:30:00Z",
+      "expires_at": "2026-01-28T14:30:00Z",
+      "notes": "Working on: Add task claim mechanism"
+    },
+    {
+      "task_id": "US-010",
+      "claimed_by": "stefan",
+      "claimed_at": "2026-01-27T12:00:00Z",
+      "expires_at": "2026-01-28T12:00:00Z",
+      "notes": "Manual claim for prompt templating work"
+    }
+  ],
+  "updated_at": "2026-01-27T14:30:00Z"
+}
+```
+
+---
+
 ## Self-Improvement
 
 This prompt can evolve. If you learn something valuable:
@@ -816,10 +963,6 @@ Only add patterns that:
 ### [Commit] Verify Branch Before Every Commit
 **Pattern:** Check `git branch --show-current` immediately before committing; abort if on main/master
 **Why:** Hard block prevents accidental commits to main; recovery after commit is harder than prevention
-
-### [Conflict] Stale Lock Detection
-**Pattern:** If lock file exists but PID is not running, remove the stale lock and continue
-**Why:** Stale locks from crashed sessions shouldn't block future execution; checking process status distinguishes active vs stale locks
 
 ---
 

@@ -1,0 +1,157 @@
+{
+  "project": "distributed-tracking",
+  "goal": "Sync PRD/task status to target repos so distributed teams have visibility and don't duplicate work",
+  "success_criteria": "Contributors can see planned work, claim tasks, and status updates propagate via git",
+  "target_repo": "C:/my-hq",
+  "has_ui": false,
+  "features": [
+    {
+      "id": "US-001",
+      "title": "Define .hq/ directory structure",
+      "description": "Document standard location in repos for distributed tracking files",
+      "acceptance_criteria": [
+        "knowledge/distributed-tracking/structure.md exists",
+        "Documents .hq/ directory with: prd.json, claims.json, sync-log.json",
+        "Each file has JSON schema defined",
+        "Documents .gitignore recommendations"
+      ],
+      "files": ["knowledge/distributed-tracking/structure.md"],
+      "passes": true,
+      "notes": "Created structure.md with JSON schemas for prd.json, claims.json, sync-log.json. Includes .gitignore recommendations."
+    },
+    {
+      "id": "US-002",
+      "title": "Add push-to-repo function",
+      "description": "Push PRD/task status to target repo's .hq/ directory",
+      "acceptance_criteria": [
+        "prompts/pure-ralph-base.md includes push_to_repo instructions",
+        "Copies PRD data to {target_repo}/.hq/prd.json",
+        "Includes: full PRD, task status, worker assignments, notes",
+        "Adds synced_at timestamp and synced_from field",
+        "Creates .hq/ directory if missing",
+        "Commits with message: sync: update distributed tracking"
+      ],
+      "files": ["prompts/pure-ralph-base.md"],
+      "dependsOn": ["US-001"],
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-003",
+      "title": "Add pull-from-repo function",
+      "description": "Pull latest status from repo before starting work",
+      "acceptance_criteria": [
+        "prompts/pure-ralph-base.md includes pull_from_repo instructions",
+        "Reads {target_repo}/.hq/prd.json if exists",
+        "Compares with local projects/{name}/prd.json",
+        "Returns diff summary (tasks added, changed, removed)",
+        "Does NOT auto-overwrite local"
+      ],
+      "files": ["prompts/pure-ralph-base.md"],
+      "dependsOn": ["US-001"],
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-004",
+      "title": "Add conflict detection and merge",
+      "description": "Detect conflicts between local and repo PRD, merge intelligently",
+      "acceptance_criteria": [
+        "prompts/pure-ralph-base.md includes conflict resolution instructions",
+        "When local and repo differ: show task-level diff",
+        "Merge strategy: per-task, newer updated_at wins",
+        "User prompted to confirm merge",
+        "Merged result written to both local and repo"
+      ],
+      "files": ["prompts/pure-ralph-base.md"],
+      "dependsOn": ["US-003"],
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-005",
+      "title": "Add duplicate work detection",
+      "description": "Warn when planning work that already exists in repo",
+      "acceptance_criteria": [
+        ".claude/commands/prd.md includes duplicate check step",
+        "On PRD creation: check if .hq/prd.json exists in target repo",
+        "If exists: show existing tasks, ask add or create separate",
+        "Fuzzy match task titles to catch near-duplicates",
+        "Warning shown before PRD is saved"
+      ],
+      "files": [".claude/commands/prd.md"],
+      "dependsOn": ["US-001"],
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-006",
+      "title": "Add task claim mechanism",
+      "description": "Claim tasks before starting to prevent conflicts",
+      "acceptance_criteria": [
+        "prompts/pure-ralph-base.md includes claim instructions",
+        "claims.json schema: task_id, claimed_by, claimed_at, expires_at",
+        "Before task: check if claimed by someone else",
+        "If claimed: show warning with claimer info and timestamp",
+        "Claims expire after 24h by default",
+        "On task complete: release claim"
+      ],
+      "files": ["prompts/pure-ralph-base.md", "knowledge/distributed-tracking/structure.md"],
+      "dependsOn": ["US-001"],
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-007",
+      "title": "Integrate with pure-ralph loop",
+      "description": "Automatic sync during pure-ralph execution",
+      "acceptance_criteria": [
+        "prompts/pure-ralph-base.md updated with sync workflow",
+        "On loop start: pull from repo, warn on conflicts",
+        "Before each task: check claim, claim if available",
+        "After each task: push status to repo",
+        "On loop complete: push final, release claims"
+      ],
+      "files": ["prompts/pure-ralph-base.md"],
+      "dependsOn": ["US-002", "US-003", "US-006"],
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-008",
+      "title": "Add /sync-tasks slash command",
+      "description": "Manual sync command for ad-hoc status checks",
+      "acceptance_criteria": [
+        ".claude/commands/sync-tasks.md exists",
+        "/sync-tasks {project} pulls and shows status diff",
+        "/sync-tasks {project} --push pushes local to repo",
+        "/sync-tasks {project} --claim {task-id} claims specific task",
+        "Shows clear summary of sync result"
+      ],
+      "files": [".claude/commands/sync-tasks.md"],
+      "dependsOn": ["US-002", "US-003", "US-006"],
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-009",
+      "title": "Document distributed workflow",
+      "description": "Comprehensive documentation for contributors",
+      "acceptance_criteria": [
+        "knowledge/distributed-tracking/workflow.md exists",
+        "Documents full sync lifecycle",
+        "Includes troubleshooting for common conflicts",
+        "Includes examples of claim/release flow"
+      ],
+      "files": ["knowledge/distributed-tracking/workflow.md"],
+      "dependsOn": ["US-007"],
+      "passes": false,
+      "notes": ""
+    }
+  ],
+  "metadata": {
+    "created_at": "2026-01-27T12:00:00Z",
+    "created_by": "stefan",
+    "purpose": "Enable distributed teams to share PRD/task status via git"
+  }
+}

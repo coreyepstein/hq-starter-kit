@@ -404,6 +404,90 @@ Beyond the required worker audit info, notes can include:
 
 ---
 
+## Distributed Tracking - Push to Repo
+
+After completing a task and updating the PRD, push the status to the target repo's `.hq/` directory so distributed teams have visibility.
+
+### push_to_repo Function
+
+Execute this after each successful task completion (after PRD update, before or as part of commit):
+
+```
+PUSH_TO_REPO:
+  1. Create .hq/ directory in target repo if missing:
+     mkdir -p {target_repo}/.hq
+
+  2. Read the local PRD from {{PRD_PATH}}
+
+  3. Add sync_metadata to create the distributed copy:
+     {
+       ...full PRD contents...,
+       "sync_metadata": {
+         "synced_at": "<ISO 8601 timestamp>",
+         "synced_from": "{{PRD_PATH}}",
+         "synced_by": "pure-ralph"
+       }
+     }
+
+  4. Write to {target_repo}/.hq/prd.json
+
+  5. Commit with message: "sync: update distributed tracking"
+```
+
+### What Gets Synced
+
+The `.hq/prd.json` includes:
+- **Full PRD:** project, goal, success_criteria, has_ui
+- **All features:** with id, title, description, acceptance_criteria
+- **Task status:** passes (true/false/null), notes, updated_at
+- **Dependencies:** dependsOn arrays
+- **Files:** list of files each task touches
+- **Metadata:** original created_at, created_by, purpose
+- **Sync metadata:** synced_at, synced_from, synced_by
+
+### Example
+
+Given local PRD at `C:/my-hq/projects/my-project/prd.json` and target repo at `C:/repos/my-project`:
+
+```bash
+# Ensure directory exists
+mkdir -p C:/repos/my-project/.hq
+
+# The prd.json written to C:/repos/my-project/.hq/prd.json:
+{
+  "project": "my-project",
+  "goal": "...",
+  "features": [...],
+  "metadata": {...},
+  "sync_metadata": {
+    "synced_at": "2026-01-27T15:30:00Z",
+    "synced_from": "C:/my-hq/projects/my-project/prd.json",
+    "synced_by": "pure-ralph"
+  }
+}
+```
+
+### Commit Strategy
+
+You have two options:
+
+1. **Combined commit** (recommended): Include the `.hq/prd.json` update in your task commit
+   ```
+   git add <task-files> {target_repo}/.hq/prd.json
+   git commit -m "feat(TASK-ID): Brief description"
+   ```
+
+2. **Separate commit**: Commit task first, then sync
+   ```
+   git commit -m "feat(TASK-ID): Brief description"
+   git add {target_repo}/.hq/prd.json
+   git commit -m "sync: update distributed tracking"
+   ```
+
+The combined approach is preferred as it keeps task completion and status in atomic sync.
+
+---
+
 ## Self-Improvement
 
 This prompt can evolve. If you learn something valuable:
